@@ -17,6 +17,7 @@ public delegate bool MapFeatureDelegate(MapFeatureData featureData);
 /// <summary>
 ///     Aggregation of all the data needed to render a map feature
 /// </summary>
+
 public readonly ref struct MapFeatureData
 {
     public long Id { get; init; }
@@ -24,7 +25,7 @@ public readonly ref struct MapFeatureData
     public GeometryType Type { get; init; }
     public ReadOnlySpan<char> Label { get; init; }
     public ReadOnlySpan<Coordinate> Coordinates { get; init; }
-    public Dictionary<string, string> Properties { get; init; }
+    public List<KeyValuePair<MapPropertyType, string>> Properties { get; init; }
 }
 
 /// <summary>
@@ -131,14 +132,24 @@ public unsafe class DataFile : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private void GetProperty(ulong stringsOffset, ulong charsOffset, int i, out ReadOnlySpan<char> key, out ReadOnlySpan<char> value)
+    private void GetProperty(ulong stringsOffset, ulong charsOffset, int i, out MapPropertyType key, out ReadOnlySpan<char> value)
     {
         if (i % 2 != 0)
         {
             throw new ArgumentException("Properties are key-value pairs and start at even indices in the string list (i.e. i % 2 == 0)");
         }
 
-        GetString(stringsOffset, charsOffset, i, out key);
+        GetString(stringsOffset, charsOffset, i, out var keyString);
+        
+        if (Enum.TryParse(typeof(MapPropertyType), keyString, true, out var result) == false)
+        {
+            key = MapPropertyType.Unknown;
+        }
+        else
+        {
+            key = (MapPropertyType)result;
+        }
+
         GetString(stringsOffset, charsOffset, i + 1, out value);
     }
 
@@ -181,21 +192,22 @@ public unsafe class DataFile : IDisposable
 
                 if (isFeatureInBBox)
                 {
-                    var properties = new Dictionary<string, string>(feature->PropertyCount);
+                    var properties = new List<KeyValuePair<MapPropertyType, string>>(feature->PropertyCount);
                     for (var p = 0; p < feature->PropertyCount; ++p)
                     {
                         GetProperty(header.Tile.Value.StringsOffsetInBytes, header.Tile.Value.CharactersOffsetInBytes, p * 2 + feature->PropertiesOffset, out var key, out var value);
-                        properties.Add(key.ToString(), value.ToString());
+
+                        properties.Add(new KeyValuePair<MapPropertyType, string>(key, value.ToString()));
                     }
 
                     if (!action(new MapFeatureData
-                        {
-                            Id = feature->Id,
-                            Label = label,
-                            Coordinates = coordinates,
-                            Type = feature->GeometryType,
-                            Properties = properties
-                        }))
+                    {
+                        Id = feature->Id,
+                        Label = label,
+                        Coordinates = coordinates,
+                        Type = feature->GeometryType,
+                        Properties = properties
+                    }))
                     {
                         break;
                     }
